@@ -1,0 +1,39 @@
+# Secrets
+.env
+backend/.env
+!.env.example
+!backend/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.db
+
+# Node
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Runtime data
+storage/*
+!storage/.gitkeep
+backend/evaluation/dataset/*
+!backend/evaluation/dataset/README.md
+!backend/evaluation/dataset/manifest.example.json
+backend/evaluation/results/
+
+# script.sh launcher output
+*.log
+.health.json
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Model weights downloaded for local development
+models/

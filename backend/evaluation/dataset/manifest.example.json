@@ -1,0 +1,26 @@
+{
+  "description": "Copy to manifest.json and list your own samples. Paths are relative to this folder.",
+  "samples": [
+    {
+      "id": "english-01",
+      "language": "en",
+      "file": "audio/english-01.mp3",
+      "reference": "lyrics/english-01.txt",
+      "source": "Where the recording came from and its licence"
+    },
+    {
+      "id": "hindi-01",
+      "language": "hi",
+      "file": "audio/hindi-01.mp3",
+      "reference": "lyrics/hindi-01.txt",
+      "source": "Where the recording came from and its licence"
+    },
+    {
+      "id": "telugu-01",
+      "language": "te",
+      "file": "audio/telugu-01.mp4",
+      "reference": "lyrics/telugu-01.txt",
+      "source": "Where the recording came from and its licence"
+    }
+  ]
+}

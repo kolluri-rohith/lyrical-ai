@@ -1,0 +1,60 @@
+name: lyricalai
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lyricalai}
+      POSTGRES_USER: ${POSTGRES_USER:-lyricalai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build:
+      context: ./backend
+      args:
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ENVIRONMENT: production
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      # Fixed inside the container; they are backed by the volumes below.
+      STORAGE_PATH: /app/storage
+      MODEL_CACHE_DIR: /app/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - storage_data:/app/storage
+      - model_cache:/app/models
+    # Not published: only reachable through the frontend's Nginx.
+    expose:
+      - "8000"
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    environment:
+      NGINX_CLIENT_MAX_BODY_SIZE: ${NGINX_CLIENT_MAX_BODY_SIZE:-60m}
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-8080}:80"
+
+volumes:
+  postgres_data:
+  storage_data:
+  model_cache:
