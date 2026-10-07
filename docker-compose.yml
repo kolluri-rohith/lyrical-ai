@@ -20,6 +20,8 @@ services:
     build:
       context: ./backend
       args:
+        # true installs PyTorch, Demucs and Whisper for TRANSCRIPTION_BACKEND=local.
+        INSTALL_LOCAL_MODELS: ${INSTALL_LOCAL_MODELS:-false}
         TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
     restart: unless-stopped
     env_file: .env

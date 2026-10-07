@@ -1,7 +1,10 @@
-# LyricalAI backend: FastAPI + FFmpeg + Demucs + Whisper in one image.
+# LyricalAI backend: FastAPI + FFmpeg. Transcription goes to a cloud Whisper API, so
+# the default image has no PyTorch and runs in a few hundred MB of RAM.
+# For local Demucs + Whisper build with --build-arg INSTALL_LOCAL_MODELS=true.
 FROM python:3.11-slim
 
-# CPU wheels by default. For an NVIDIA GPU build pass
+ARG INSTALL_LOCAL_MODELS=false
+# Local models only: CPU wheels by default. For an NVIDIA GPU build pass
 #   --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 ARG TORCH_VERSION=2.5.1
@@ -21,11 +24,14 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# PyTorch first, from the chosen wheel index, so the big layer is cached.
-RUN pip install "torch==${TORCH_VERSION}" "torchaudio==${TORCH_VERSION}" --index-url "${TORCH_INDEX_URL}"
-
-COPY requirements.txt constraints.txt ./
+COPY requirements.txt requirements-local.txt constraints.txt ./
 RUN pip install -r requirements.txt -c constraints.txt
+
+# Local models: PyTorch first, from the chosen wheel index, then Demucs and Whisper.
+RUN if [ "${INSTALL_LOCAL_MODELS}" = "true" ]; then \
+        pip install "torch==${TORCH_VERSION}" "torchaudio==${TORCH_VERSION}" --index-url "${TORCH_INDEX_URL}" \
+        && pip install -r requirements-local.txt -c constraints.txt; \
+    fi
 
 COPY alembic.ini .
 COPY alembic ./alembic
@@ -42,5 +48,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status == 200 else 1)"
 
-# A single worker process: the models are loaded once and jobs run on one background thread.
+# A single worker process: jobs run one at a time on one background thread.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips", "*"]

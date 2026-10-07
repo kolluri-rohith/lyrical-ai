@@ -18,6 +18,10 @@ os.environ.update(
         "DATABASE_URL": f"sqlite:///{(_TMP / 'test.db').as_posix()}",
         "STORAGE_PATH": str(_TMP / "storage"),
         "MODEL_CACHE_DIR": "",
+        "TRANSCRIPTION_BACKEND": "cloud",
+        "OPENAI_API_KEY": "test-api-key",
+        "OPENAI_BASE_URL": "https://transcription.invalid/v1",
+        "OPENAI_TRANSCRIPTION_MODEL": "whisper-1",
         "MAX_FILE_SIZE_MB": "1",
         "MAX_DURATION_MINUTES": "1",
         "MIN_FREE_DISK_MB": "1",
@@ -100,6 +104,17 @@ def tone_wav(media_dir) -> Path:
 
 
 @pytest.fixture(scope="session")
+def noise_mp3(media_dir) -> Path:
+    """Fifty seconds of noise, which lossless codecs cannot shrink."""
+    path = media_dir / "noise.mp3"
+    _ffmpeg(
+        "-f", "lavfi", "-i", "anoisesrc=duration=50:amplitude=0.3:sample_rate=44100",
+        "-b:a", "64k", str(path),
+    )
+    return path
+
+
+@pytest.fixture(scope="session")
 def silent_wav(media_dir) -> Path:
     path = media_dir / "silent.wav"
     _ffmpeg("-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", "2", str(path))
@@ -114,6 +129,40 @@ def video_mp4(media_dir) -> Path:
         "-f", "lavfi", "-i", "testsrc=duration=3:size=160x120:rate=10",
         "-f", "lavfi", "-i", "sine=frequency=330:duration=3",
         "-c:v", "mpeg4", "-c:a", "aac", "-shortest", str(path),
+    )
+    return path
+
+
+@pytest.fixture(scope="session")
+def video_late_audio(media_dir) -> Path:
+    """A video whose audio track starts 2 s after the picture; the beep is at 2.5 s."""
+    source = media_dir / "late-source.mp4"
+    _ffmpeg(
+        "-f", "lavfi", "-i", "testsrc=duration=6:size=160x120:rate=10",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=0.2,adelay=500,apad=whole_dur=4",
+        "-c:v", "mpeg4", "-c:a", "aac", str(source),
+    )
+    path = media_dir / "late.mp4"
+    _ffmpeg(
+        "-i", str(source), "-itsoffset", "2", "-i", str(source),
+        "-map", "0:v", "-map", "1:a", "-c", "copy", str(path),
+    )
+    return path
+
+
+@pytest.fixture(scope="session")
+def video_two_tracks(media_dir) -> Path:
+    """An MKV with an English track first and a Hindi track flagged as the default."""
+    path = media_dir / "dubbed.mkv"
+    _ffmpeg(
+        "-f", "lavfi", "-i", "testsrc=duration=2:size=160x120:rate=10",
+        "-f", "lavfi", "-i", "sine=frequency=330:duration=2",
+        "-f", "lavfi", "-i", "sine=frequency=550:duration=2",
+        "-map", "0:v", "-map", "1:a", "-map", "2:a",
+        "-c:v", "mpeg4", "-c:a", "aac",
+        "-metadata:s:a:0", "language=eng", "-metadata:s:a:1", "language=hin",
+        "-disposition:a:0", "0", "-disposition:a:1", "default",
+        str(path),
     )
     return path
 

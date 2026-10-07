@@ -59,7 +59,8 @@ def intermediate_paths(job_id: str) -> list[Path]:
     return [
         audio_path(job_id),
         vocals_path(job_id),
-        temp_path(job_id, ".extracted.wav"),
+        temp_path(job_id, ".api.flac"),
+        temp_path(job_id, ".api.mp3"),
         temp_path(job_id, ".whisper.wav"),
     ]
 

@@ -23,7 +23,7 @@ from app.schemas.base import ErrorResponse
 from app.schemas.transcription import JobCreatedResponse, JobDetailResponse, JobStatusResponse
 from app.services import lyrics_service
 from app.services.job_queue import job_queue
-from app.services.language_service import AUTO_LANGUAGE, is_valid_request
+from app.services.language_service import AUTO_LANGUAGE, resolve_request
 from app.utils import storage
 from app.utils.files import classify_upload, download_basename, file_extension, sanitize_filename
 
@@ -89,12 +89,18 @@ def create_transcription(
     caller: CurrentCaller,
     file: Annotated[UploadFile, File(description="Audio or video file")],
     language: Annotated[
-        str, Form(description="`auto`, `en`, `hi` or `te`")
+        str,
+        Form(
+            description=(
+                "`auto`, or a language code or name (`en`, `hi`, `te`, `Hindi`, ...). "
+                "Anything other than `auto` is transcribed strictly in that language."
+            )
+        ),
     ] = AUTO_LANGUAGE,
 ) -> JobCreatedResponse:
     settings = get_settings()
-    language = language.strip().lower()
-    if not is_valid_request(language):
+    language = resolve_request(language)
+    if language is None:
         raise AppError("Unsupported language selection.", code="UNSUPPORTED_LANGUAGE")
 
     original_filename = sanitize_filename(file.filename)

@@ -17,10 +17,21 @@ STDERR_LOG_CHARS = 600
 
 
 @dataclass(frozen=True)
+class AudioStream:
+    position: int  # index among the audio streams, as used by `-map 0:a:N`
+    codec: str
+    sample_rate: int
+    channels: int
+    language: str | None  # container language tag, e.g. "hin"
+    is_default: bool
+
+
+@dataclass(frozen=True)
 class MediaInfo:
     duration: float
     has_audio: bool
     has_video: bool
+    audio_streams: tuple[AudioStream, ...] = ()
 
 
 def ffmpeg_available() -> bool:
@@ -86,6 +97,17 @@ def probe(path: Path) -> MediaInfo:
         duration=duration,
         has_audio=bool(audio_streams),
         has_video=bool(video_streams),
+        audio_streams=tuple(
+            AudioStream(
+                position=position,
+                codec=str(stream.get("codec_name") or "unknown"),
+                sample_rate=int(_to_float(stream.get("sample_rate"))),
+                channels=int(_to_float(stream.get("channels"))),
+                language=(stream.get("tags") or {}).get("language"),
+                is_default=bool(stream.get("disposition", {}).get("default")),
+            )
+            for position, stream in enumerate(audio_streams)
+        ),
     )
 
 

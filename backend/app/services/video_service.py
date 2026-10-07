@@ -1,24 +1,25 @@
-"""Video handling: pull the audio track out of an uploaded video with FFmpeg."""
+"""Video handling: choose which audio track of an uploaded video to transcribe.
 
-from pathlib import Path
+There is no intermediate "extracted" file. The chosen track is decoded straight from
+the original container by the same FFmpeg pass an audio upload goes through
+(audio_service), so a video is transcribed from exactly the samples it carries.
+"""
 
-from app.utils.ffmpeg import run_ffmpeg
+from app.services.language_service import resolve_language
+from app.utils.ffmpeg import AudioStream, MediaInfo
 
-SEPARATION_SAMPLE_RATE = 44100
 
+def select_audio_stream(info: MediaInfo, language: str | None = None) -> AudioStream:
+    """The audio track to transcribe: one tagged with `language`, else the default one.
 
-def extract_audio(video_path: Path, output_path: Path) -> Path:
-    """Write the first audio stream of `video_path` as stereo 44.1 kHz WAV."""
-    run_ffmpeg(
-        [
-            "-i", str(video_path),
-            "-vn",
-            "-map", "0:a:0",
-            "-ac", "2",
-            "-ar", str(SEPARATION_SAMPLE_RATE),
-            "-c:a", "pcm_s16le",
-            str(output_path),
-        ],
-        failure_message="Could not extract the audio track from this video.",
-    )
-    return output_path
+    Videos (MKV especially) often carry several tracks - dubs, commentary - and the
+    first one is not necessarily the one a player would pick.
+    """
+    streams = info.audio_streams
+    if not streams:
+        raise ValueError("The media has no audio stream")
+
+    if language:
+        tagged = [s for s in streams if resolve_language(s.language) == language]
+        streams = tuple(tagged) or streams
+    return next((s for s in streams if s.is_default), streams[0])

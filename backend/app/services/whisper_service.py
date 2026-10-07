@@ -1,12 +1,20 @@
-"""Whisper transcription (faster-whisper / CTranslate2). The model is loaded once."""
+"""Local Whisper transcription (faster-whisper / CTranslate2). The model is loaded once.
+
+Only used with TRANSCRIPTION_BACKEND=local. Nothing heavy is imported until then, so
+this module is safe to import without requirements-local.txt installed.
+"""
+
+from __future__ import annotations
 
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import numpy as np
+if TYPE_CHECKING:
+    import numpy as np
 
 from app.core.config import get_settings
 from app.core.logging import get_logger

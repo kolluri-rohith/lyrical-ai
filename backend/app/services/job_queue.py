@@ -1,7 +1,7 @@
 """In-process job worker.
 
-One worker thread runs jobs one at a time, so a single copy of each model is
-shared and the machine is never asked to run two Demucs/Whisper jobs at once.
+One worker thread runs jobs one at a time, so only one FFmpeg process runs at once
+and, with the local backend, a single copy of each model is shared.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -108,5 +108,7 @@ job_queue = JobQueue()
 
 
 def preload_if_configured() -> None:
-    if get_settings().preload_models:
+    settings = get_settings()
+    # The cloud backend has no models to load.
+    if settings.uses_local_models and settings.preload_models:
         job_queue.preload_models()

@@ -42,7 +42,20 @@ class Settings(BaseSettings):
     cleanup_interval_minutes: int = 60
     min_free_disk_mb: int = 500
 
-    # --- AI models ----------------------------------------------------------
+    # --- Transcription ------------------------------------------------------
+    # "cloud" sends the audio to an OpenAI-compatible API and loads no model, so the
+    # backend fits in a small instance. "local" runs Demucs + Whisper in-process and
+    # needs requirements-local.txt and several GB of RAM.
+    transcription_backend: Literal["cloud", "local"] = "cloud"
+    openai_api_key: str = ""
+    # Any OpenAI-compatible endpoint works, e.g. https://api.groq.com/openai/v1
+    openai_base_url: str = "https://api.openai.com/v1"
+    # Must support response_format=verbose_json (segment timestamps), e.g. whisper-1.
+    openai_transcription_model: str = "whisper-1"
+    openai_timeout_seconds: int = 600
+    openai_max_upload_mb: int = 25
+
+    # --- Local AI models (TRANSCRIPTION_BACKEND=local only) -----------------
     whisper_model: Literal["tiny", "base", "small", "medium"] = "small"
     whisper_compute_type: str = "auto"
     whisper_beam_size: int = 5
@@ -94,6 +107,14 @@ class Settings(BaseSettings):
     @property
     def max_file_size_bytes(self) -> int:
         return self.max_file_size_mb * 1024 * 1024
+
+    @property
+    def uses_local_models(self) -> bool:
+        return self.transcription_backend == "local"
+
+    @property
+    def openai_max_upload_bytes(self) -> int:
+        return self.openai_max_upload_mb * 1024 * 1024
 
     @property
     def max_duration_seconds(self) -> int:

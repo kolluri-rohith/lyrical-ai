@@ -27,7 +27,9 @@ def _complete(db, job_id: str) -> None:
 def test_health(client):
     body = client.get("/api/health").json()
     assert body["database"] == "ok"
-    assert body["device"] == "cpu"
+    assert body["status"] == "ok"
+    assert body["device"] == "cloud"
+    assert body["whisperModel"] == "whisper-1"
     assert body["modelsLoaded"] == {"whisper": False, "demucs": False}
 
 
@@ -75,6 +77,12 @@ def test_upload_rejects_empty_file(client):
     response = upload(client, b"", "song.mp3", "audio/mpeg")
     assert response.status_code == 400
     assert response.json()["code"] == "EMPTY_FILE"
+
+
+def test_upload_accepts_a_language_name(client, db):
+    response = upload(client, FAKE_MP3, "song.mp3", "audio/mpeg", language=" Telugu ")
+    assert response.status_code == 202
+    assert db.get(TranscriptionJob, response.json()["jobId"]).requested_language == "te"
 
 
 def test_upload_rejects_unknown_language(client):

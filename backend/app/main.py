@@ -17,6 +17,7 @@ from app.core.logging import configure_logging, get_logger
 from app.core.middleware import UploadSizeLimitMiddleware
 from app.database.migrations import run_migrations
 from app.services.cleanup_service import cleanup_loop
+from app.services.cloud_transcription_service import cloud_transcription_service
 from app.services.job_queue import job_queue, preload_if_configured
 from app.utils.ffmpeg import ffmpeg_available
 from app.utils.storage import ensure_storage_dirs
@@ -26,9 +27,10 @@ logger = get_logger("app")
 DESCRIPTION = """
 Multilingual automatic lyric transcription.
 
-Upload a song or a music video and LyricalAI extracts the audio (FFmpeg), isolates
-the vocals (Demucs) and transcribes them into timestamped lyrics (Whisper) in
-English, Hindi or Telugu.
+Upload a song or a music video and LyricalAI prepares the audio (FFmpeg) and
+transcribes it into timestamped lyrics (Whisper) in English, Hindi or Telugu.
+Transcription runs through a cloud Whisper API by default, or on local
+Demucs + Whisper models with `TRANSCRIPTION_BACKEND=local`.
 
 Errors are always returned as `{"detail": "...", "code": "..."}`.
 """
@@ -36,8 +38,9 @@ Errors are always returned as `{"detail": "...", "code": "..."}`.
 
 def _configure_model_cache() -> None:
     """Point the model libraries at MODEL_CACHE_DIR so weights are downloaded once."""
-    cache_dir = get_settings().model_cache_dir
-    if cache_dir is None:
+    settings = get_settings()
+    cache_dir = settings.model_cache_dir
+    if cache_dir is None or not settings.uses_local_models:
         return
     cache_dir.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("TORCH_HOME", str(cache_dir / "torch"))
@@ -55,6 +58,8 @@ async def lifespan(_: FastAPI):
         logger.warning("JWT_SECRET_KEY is still a placeholder; set a long random value in .env")
     if not ffmpeg_available():
         logger.error("FFmpeg/ffprobe not found on PATH; uploads cannot be processed")
+    if not settings.uses_local_models and not cloud_transcription_service.is_configured:
+        logger.error("OPENAI_API_KEY is not set; uploads cannot be transcribed")
 
     await asyncio.to_thread(run_migrations)
     job_queue.start()
@@ -62,9 +67,13 @@ async def lifespan(_: FastAPI):
     preload_if_configured()
     cleanup_task = asyncio.create_task(cleanup_loop())
 
+    if settings.uses_local_models:
+        transcriber = f"local whisper={settings.whisper_model}, device={settings.device}"
+    else:
+        transcriber = f"cloud model={cloud_transcription_service.model_name}"
     logger.info(
-        "%s %s started (whisper=%s, device=%s, max upload=%d MB)",
-        APP_NAME, APP_VERSION, settings.whisper_model, settings.device, settings.max_file_size_mb,
+        "%s %s started (%s, max upload=%d MB)",
+        APP_NAME, APP_VERSION, transcriber, settings.max_file_size_mb,
     )
     try:
         yield

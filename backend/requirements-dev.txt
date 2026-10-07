@@ -2,7 +2,6 @@
 
 # Tests
 pytest==8.3.4
-httpx==0.28.1
 
-# Evaluation (WER / CER)
+# Evaluation (WER / CER). evaluation/evaluate.py also needs requirements-local.txt.
 jiwer==3.0.5

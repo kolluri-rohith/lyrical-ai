@@ -1,6 +1,7 @@
 """End-to-end test with the REAL Demucs and Whisper models.
 
-Slow, and it downloads the model weights on first run, so it is opt-in:
+Slow, needs requirements-local.txt, and it downloads the model weights on first run,
+so it is opt-in:
 
     LYRICALAI_TEST_AUDIO=path/to/song.mp3 LYRICALAI_TEST_LANGUAGE=en pytest -m integration
 
@@ -34,6 +35,7 @@ def test_real_pipeline_produces_timestamped_lyrics(client, monkeypatch):
 
     sample = Path(SAMPLE)
     settings = get_settings()
+    monkeypatch.setattr(settings, "transcription_backend", "local")
     monkeypatch.setattr(settings, "max_duration_minutes", 15)
     monkeypatch.setattr(settings, "enable_separation_fallback", False)  # Demucs must really work
 

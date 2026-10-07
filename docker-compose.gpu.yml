@@ -6,8 +6,10 @@ services:
   backend:
     build:
       args:
+        INSTALL_LOCAL_MODELS: "true"
         TORCH_INDEX_URL: https://download.pytorch.org/whl/cu121
     environment:
+      TRANSCRIPTION_BACKEND: local
       DEVICE: auto
       # Lets Whisper (CTranslate2) find the cuBLAS/cuDNN libraries shipped with PyTorch.
       LD_LIBRARY_PATH: /usr/local/lib/python3.11/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib

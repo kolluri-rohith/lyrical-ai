@@ -5,6 +5,7 @@ from app.api.deps import DbSession
 from app.core.config import APP_VERSION, get_settings
 from app.core.logging import get_logger
 from app.schemas.system import ConfigResponse, HealthResponse, LanguageResponse, ModelsLoaded
+from app.services.cloud_transcription_service import cloud_transcription_service
 from app.services.language_service import SUPPORTED_LANGUAGES
 from app.services.vocal_separation_service import vocal_separation_service
 from app.services.whisper_service import whisper_service
@@ -31,13 +32,22 @@ def health(db: DbSession) -> HealthResponse:
         database = "error"
 
     ffmpeg = ffmpeg_available()
+    settings = get_settings()
+    if settings.uses_local_models:
+        device = whisper_service.device or resolve_device()
+        whisper_model = settings.whisper_model
+        transcriber_ready = True
+    else:
+        device = cloud_transcription_service.device
+        whisper_model = cloud_transcription_service.model_name
+        transcriber_ready = cloud_transcription_service.is_configured
     return HealthResponse(
-        status="ok" if database == "ok" and ffmpeg else "degraded",
+        status="ok" if database == "ok" and ffmpeg and transcriber_ready else "degraded",
         version=APP_VERSION,
         database=database,
         ffmpeg=ffmpeg,
-        device=whisper_service.device or resolve_device(),
-        whisper_model=get_settings().whisper_model,
+        device=device,
+        whisper_model=whisper_model,
         models_loaded=ModelsLoaded(
             whisper=whisper_service.is_loaded, demucs=vocal_separation_service.is_loaded
         ),

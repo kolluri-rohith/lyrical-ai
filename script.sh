@@ -149,7 +149,7 @@ fi
 
 DEPS_STAMP=backend/.venv/.deps-stamp
 NEED_INSTALL=false
-if ! "$PY" -c "import uvicorn, fastapi, faster_whisper, demucs" >/dev/null 2>&1; then
+if ! "$PY" -c "import uvicorn, fastapi, httpx, pytest" >/dev/null 2>&1; then
   NEED_INSTALL=true
 elif [ -f "$DEPS_STAMP" ]; then
   for req in backend/requirements.txt backend/requirements-dev.txt backend/constraints.txt; do
@@ -158,7 +158,7 @@ elif [ -f "$DEPS_STAMP" ]; then
 fi
 if [ "$NEED_INSTALL" = "true" ]; then
   echo -e "${YELLOW}[installing]${NC}"
-  echo "   Installing Python packages (the first run downloads PyTorch; this takes a while)..."
+  echo "   Installing Python packages..."
   # A virtualenv made by uv has no pip of its own.
   if command -v uv >/dev/null 2>&1; then
     INSTALL=(uv pip install --python "$PY")

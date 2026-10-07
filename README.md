@@ -274,15 +274,21 @@ Upload ─► VALIDATING ─► EXTRACTING_AUDIO ─► PREPROCESSING ─► SEP
 | ------------------ | ------------------------------------------------------------------------------------------------------ |
 | QUEUED             | The upload is saved and the job id is returned immediately.                                             |
 | VALIDATING         | `ffprobe` checks the file decodes, has an audio stream and is within the length limit.                   |
-| EXTRACTING_AUDIO   | Video only: FFmpeg pulls out the audio track.                                                           |
-| PREPROCESSING      | Silence check, then FFmpeg converts to loudness-normalised stereo 44.1 kHz WAV.                          |
-| SEPARATING_VOCALS  | Demucs splits the song into stems; only the vocal stem is kept.                                         |
-| DETECTING_LANGUAGE | With Auto Detect, Whisper picks the most likely of the supported languages from the vocals.             |
-| TRANSCRIBING       | Whisper transcribes the vocals (16 kHz mono) into segments with start/end times.                        |
+| EXTRACTING_AUDIO   | Video only: the audio track to use is chosen (the one tagged with the selected language, else the default track). It is decoded straight from the video, on the video's timeline, by the same FFmpeg pass audio uploads go through. |
+| PREPROCESSING      | Silence check, then one FFmpeg pass: loudness normalisation and conversion to mono 16 kHz FLAC (cloud) or stereo 44.1 kHz WAV (local). |
+| SEPARATING_VOCALS  | Local backend only: Demucs splits the song into stems; only the vocal stem is kept.                     |
+| DETECTING_LANGUAGE | Local backend only: with Auto Detect, Whisper picks the most likely of the supported languages.         |
+| TRANSCRIBING       | Whisper (cloud API or local model) transcribes the audio into segments with start/end times. A selected language is passed as Whisper's `language`, which turns language detection off for that job. |
 | POST_PROCESSING    | Whitespace/punctuation clean-up, removal of known artifacts ("[Music]", "Thanks for watching"), merging of tiny fragments. Repeated lines are kept; nothing is invented. |
 | COMPLETED / FAILED | Lyrics and segments are stored; intermediate files are deleted.                                         |
 
-**Fallback.** If Demucs fails (for example, out of memory) and `ENABLE_SEPARATION_FALLBACK=true`,
+**Backends.** `TRANSCRIPTION_BACKEND=cloud` (default) sends the audio to an
+OpenAI-compatible Whisper API and loads no model, so the backend runs in a few hundred
+MB of RAM. `TRANSCRIPTION_BACKEND=local` runs Demucs + Whisper in-process; it needs
+`backend/requirements-local.txt` (Docker: `INSTALL_LOCAL_MODELS=true`) and the RAM
+described in section 8.
+
+**Fallback.** With the local backend, if Demucs fails (for example, out of memory) and `ENABLE_SEPARATION_FALLBACK=true`,
 the full mix is transcribed instead and the result carries a warning that accuracy may be lower.
 
 **Supported languages.** English (`en`), Hindi (`hi`), Telugu (`te`). To add another
@@ -310,12 +316,17 @@ Both files ship with placeholder values and are git-ignored - **never commit the
 | `MAX_DURATION_MINUTES`       | `15`                      | Longest audio/video accepted                                            |
 | `FILE_RETENTION_HOURS`       | `72`                      | How long uploads are kept for playback (lyrics are kept until deleted)  |
 | `STORAGE_PATH`               | `/app/storage`            | Where uploads and working files live                                    |
-| `WHISPER_MODEL`              | `small`                   | `tiny`, `base`, `small` or `medium`                                     |
-| `DEVICE`                     | `auto`                    | `auto`, `cpu` or `cuda`                                                 |
-| `DEMUCS_MODEL`               | `htdemucs`                | Demucs model name                                                       |
-| `PRELOAD_MODELS`             | `true`                    | Load models at start-up instead of on the first upload                  |
-| `ENABLE_SEPARATION_FALLBACK` | `true`                    | Transcribe the full mix if Demucs fails                                 |
-| `MODEL_CACHE_DIR`            | `/app/models` (volume)    | Where model weights are stored                                          |
+| `TRANSCRIPTION_BACKEND`      | `cloud`                   | `cloud` (Whisper API, no local model) or `local` (Demucs + Whisper)     |
+| `OPENAI_API_KEY`             | *(empty)*                 | **Set this.** API key for the cloud transcription service               |
+| `OPENAI_BASE_URL`            | `https://api.openai.com/v1` | Any OpenAI-compatible endpoint, e.g. `https://api.groq.com/openai/v1` |
+| `OPENAI_TRANSCRIPTION_MODEL` | `whisper-1`               | Model name; must return segment timestamps (`verbose_json`)             |
+| `INSTALL_LOCAL_MODELS`       | `false`                   | Docker build: install PyTorch, Demucs and Whisper for the local backend |
+| `WHISPER_MODEL`              | `small`                   | Local only: `tiny`, `base`, `small` or `medium`                         |
+| `DEVICE`                     | `auto`                    | Local only: `auto`, `cpu` or `cuda`                                     |
+| `DEMUCS_MODEL`               | `htdemucs`                | Local only: Demucs model name                                           |
+| `PRELOAD_MODELS`             | `true`                    | Local only: load models at start-up instead of on the first upload      |
+| `ENABLE_SEPARATION_FALLBACK` | `true`                    | Local only: transcribe the full mix if Demucs fails                     |
+| `MODEL_CACHE_DIR`            | `/app/models` (volume)    | Local only: where model weights are stored                              |
 | `APP_PORT` / `APP_BIND`      | `8080` / `0.0.0.0`        | Host port / address the site is published on                            |
 | `LOG_LEVEL`                  | `INFO`                    | Log verbosity                                                           |
 
@@ -328,6 +339,9 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 ---
 
 ## 8. Model configuration and GPU
+
+This section applies to `TRANSCRIPTION_BACKEND=local` only. The default cloud backend
+loads no model and needs none of this.
 
 | `WHISPER_MODEL` | Download | RAM (CPU, approx.) | Notes                                                |
 | --------------- | -------- | ------------------ | ---------------------------------------------------- |

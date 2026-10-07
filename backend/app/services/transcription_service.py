@@ -1,7 +1,12 @@
 """The transcription pipeline: runs one job from uploaded file to stored lyrics.
 
-    validate -> (video: extract audio) -> preprocess -> separate vocals
-             -> detect language -> transcribe -> post-process -> save
+    validate -> (video: pick the audio track) -> preprocess -> transcribe
+             -> post-process -> save
+
+Transcription runs on one of two backends (TRANSCRIPTION_BACKEND):
+
+    cloud : the audio is sent to an OpenAI-compatible Whisper API; no model is loaded
+    local : separate vocals (Demucs) -> detect language -> transcribe (Whisper)
 
 Every stage change is written to the database, so the status endpoint always
 reports what the worker is really doing.
@@ -9,6 +14,7 @@ reports what the worker is really doing.
 
 import errno
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.core.config import get_settings
@@ -22,7 +28,8 @@ from app.models import (
     TranscriptionSegment,
 )
 from app.services import audio_service, lyrics_service, video_service
-from app.services.language_service import AUTO_LANGUAGE
+from app.services.cloud_transcription_service import cloud_transcription_service
+from app.services.language_service import AUTO_LANGUAGE, resolve_language
 from app.services.vocal_separation_service import vocal_separation_service
 from app.services.whisper_service import whisper_service
 from app.utils import storage
@@ -38,12 +45,26 @@ SEPARATION_FALLBACK_WARNING = (
     "Vocal separation was not available for this file, so the lyrics were transcribed "
     "from the full mix. Accuracy may be lower than usual."
 )
+UNSUPPORTED_LANGUAGE_WARNING = (
+    "The language detected in this file is not one LyricalAI supports, so the lyrics "
+    "may be wrong. Choose the song's language yourself and try again."
+)
+TOO_LARGE_FOR_API_MESSAGE = (
+    "This file is too long for the transcription service. Please try a shorter file."
+)
 # Write transcription progress to the database at most every N percent.
 PROGRESS_STEP_PERCENT = 2
 
 
 class JobCancelled(Exception):
     """The job was deleted while it was being processed."""
+
+
+@dataclass(frozen=True)
+class _Transcript:
+    segments: list
+    model_name: str
+    device: str | None
 
 
 def _update_job(job_id: str, **fields) -> None:
@@ -88,6 +109,82 @@ def _separate_vocals(job_id: str, mix_path: Path) -> tuple[Path, str | None]:
         return mix_path, SEPARATION_FALLBACK_WARNING
 
 
+def _encode_for_api(job_id: str, upload: Path, stream: int) -> Path:
+    """Audio file to send to the API: lossless FLAC, or MP3 if that is over the limit."""
+    limit = get_settings().openai_max_upload_bytes
+    flac = audio_service.encode_for_api(
+        upload, storage.temp_path(job_id, ".api.flac"), stream=stream
+    )
+    if flac.stat().st_size <= limit:
+        return flac
+    logger.info("job=%s FLAC is over the API upload limit; compressing to MP3", job_id)
+    mp3 = audio_service.compress_for_api(flac, storage.temp_path(job_id, ".api.mp3"))
+    storage.remove_file(flac)
+    if mp3.stat().st_size > limit:
+        raise PipelineError(TOO_LARGE_FOR_API_MESSAGE)
+    return mp3
+
+
+def _transcribe_in_cloud(
+    job_id: str, upload: Path, stream: int, language: str | None
+) -> _Transcript:
+    """Send the audio to the cloud API. `language` is None only for Auto Detect."""
+    api_audio = _encode_for_api(job_id, upload, stream)
+
+    # An explicit choice is final: it is passed to the API as its `language`
+    # parameter, which switches the API's own language detection off for this job.
+    _set_stage(job_id, JobStatus.TRANSCRIBING, detected_language=language)
+    result = cloud_transcription_service.transcribe(api_audio, language)
+
+    if language is None:
+        detected = resolve_language(result.language)
+        logger.info("job=%s detected language=%s (%s)", job_id, detected, result.language)
+        if detected is None:
+            _update_job(job_id, warning=UNSUPPORTED_LANGUAGE_WARNING)
+        else:
+            _update_job(job_id, detected_language=detected)
+
+    return _Transcript(
+        segments=result.segments,
+        model_name=cloud_transcription_service.model_name,
+        device=cloud_transcription_service.device,
+    )
+
+
+def _transcribe_locally(
+    job_id: str, upload: Path, stream: int, language: str | None
+) -> _Transcript:
+    """Demucs + Whisper in this process. `language` is None only for Auto Detect."""
+    mix_path = audio_service.normalize_for_separation(
+        upload, storage.audio_path(job_id), stream=stream
+    )
+
+    _set_stage(job_id, JobStatus.SEPARATING_VOCALS)
+    voice_path, warning = _separate_vocals(job_id, mix_path)
+    if warning:
+        _update_job(job_id, warning=warning)
+    whisper_input = audio_service.convert_for_whisper(
+        voice_path, storage.temp_path(job_id, ".whisper.wav")
+    )
+
+    _set_stage(job_id, JobStatus.DETECTING_LANGUAGE)
+    audio = whisper_service.load_audio(whisper_input)
+    if language is None:
+        language, probability = whisper_service.detect_language(audio)
+        logger.info("job=%s detected language=%s (p=%.2f)", job_id, language, probability)
+    _update_job(job_id, detected_language=language)
+
+    _set_stage(job_id, JobStatus.TRANSCRIBING, transcription_progress=0)
+    segments = whisper_service.transcribe(
+        audio, language, on_progress=_make_progress_reporter(job_id)
+    )
+    return _Transcript(
+        segments=segments,
+        model_name=whisper_service.model_name,
+        device=whisper_service.device,
+    )
+
+
 def _run_pipeline(job_id: str, started: float) -> None:
     settings = get_settings()
     with SessionLocal() as db:
@@ -115,41 +212,29 @@ def _run_pipeline(job_id: str, started: float) -> None:
         )
     _update_job(job_id, duration=round(info.duration, 3))
 
-    # --- Extract audio (video only) ----------------------------------------
-    source = upload
+    # --- Pick the audio track (video only) ---------------------------------
+    explicit_language = None if requested_language == AUTO_LANGUAGE else requested_language
+    stream = 0
     if declared_type == "video":
         _set_stage(job_id, JobStatus.EXTRACTING_AUDIO)
-        source = video_service.extract_audio(upload, storage.temp_path(job_id, ".extracted.wav"))
+        track = video_service.select_audio_stream(info, explicit_language)
+        stream = track.position
+        logger.info(
+            "job=%s audio track %d of %d: codec=%s rate=%d channels=%d language=%s",
+            job_id, track.position + 1, len(info.audio_streams),
+            track.codec, track.sample_rate, track.channels, track.language,
+        )
 
     # --- Preprocess ---------------------------------------------------------
     _set_stage(job_id, JobStatus.PREPROCESSING)
-    audio_service.ensure_not_silent(source)
-    mix_path = audio_service.normalize_for_separation(source, storage.audio_path(job_id))
-
-    # --- Separate vocals ----------------------------------------------------
-    _set_stage(job_id, JobStatus.SEPARATING_VOCALS)
-    voice_path, warning = _separate_vocals(job_id, mix_path)
-    if warning:
-        _update_job(job_id, warning=warning)
-    whisper_input = audio_service.convert_for_whisper(
-        voice_path, storage.temp_path(job_id, ".whisper.wav")
-    )
-
-    # --- Detect language ----------------------------------------------------
-    _set_stage(job_id, JobStatus.DETECTING_LANGUAGE)
-    audio = whisper_service.load_audio(whisper_input)
-    if requested_language == AUTO_LANGUAGE:
-        language, probability = whisper_service.detect_language(audio)
-        logger.info("job=%s detected language=%s (p=%.2f)", job_id, language, probability)
-    else:
-        language = requested_language
-    _update_job(job_id, detected_language=language)
+    audio_service.ensure_not_silent(upload, stream=stream)
 
     # --- Transcribe ---------------------------------------------------------
-    _set_stage(job_id, JobStatus.TRANSCRIBING, transcription_progress=0)
-    raw_segments = whisper_service.transcribe(
-        audio, language, on_progress=_make_progress_reporter(job_id)
-    )
+    if settings.uses_local_models:
+        transcript = _transcribe_locally(job_id, upload, stream, explicit_language)
+    else:
+        transcript = _transcribe_in_cloud(job_id, upload, stream, explicit_language)
+    raw_segments = transcript.segments
 
     # --- Post-process -------------------------------------------------------
     _set_stage(job_id, JobStatus.POST_PROCESSING, transcription_progress=100)
@@ -173,8 +258,8 @@ def _run_pipeline(job_id: str, started: float) -> None:
         ]
         job.result = TranscriptionResult(
             full_text=lyrics_service.build_full_text(lines),
-            model_name=whisper_service.model_name,
-            device=whisper_service.device,
+            model_name=transcript.model_name,
+            device=transcript.device,
             processing_time=processing_time,
         )
         job.status = JobStatus.COMPLETED.value
@@ -183,7 +268,7 @@ def _run_pipeline(job_id: str, started: float) -> None:
 
     logger.info(
         "job=%s stage=COMPLETED model=%s device=%s duration=%.1fs processing_time=%.1fs lines=%d",
-        job_id, whisper_service.model_name, whisper_service.device,
+        job_id, transcript.model_name, transcript.device,
         info.duration, processing_time, len(lines),
     )
 
