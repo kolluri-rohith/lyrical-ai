@@ -3,11 +3,19 @@
 **An end-to-end multilingual automatic lyric transcription system.**
 
 Upload a song or a music video and get timestamped lyrics back. LyricalAI extracts the
-audio with **FFmpeg**, isolates the singing voice with **Demucs**, and transcribes it with
-**Whisper** in **English, Hindi or Telugu** - then shows the lyrics in sync with playback
-and lets you download them as TXT, SRT or VTT.
+audio with **FFmpeg** and transcribes it with **Whisper** in **English, Hindi or Telugu** -
+then shows the lyrics in sync with playback and lets you download them as TXT, SRT or VTT.
 
-Everything runs on your own machine or server. No paid AI API is involved.
+No paid AI API is needed. Transcription runs on one of three backends:
+
+| `TRANSCRIPTION_BACKEND` | What transcribes                                   | Cost / needs                                   |
+| ----------------------- | -------------------------------------------------- | ---------------------------------------------- |
+| `cloud` (default)       | Whisper `large-v3` on **Groq's free tier**         | A free Groq API key; backend needs little RAM  |
+| `lite`                  | A small Whisper model (`tiny`/`base`) on your CPU  | No key at all; about 0.5-1 GB RAM, no PyTorch  |
+| `local`                 | **Demucs** vocal separation + Whisper on your machine | No key; 4-8 GB RAM, PyTorch                 |
+
+See [Free transcription and free hosting](#17-free-transcription-and-free-hosting) for the
+set-up, and [What changed](#18-what-changed) for the history of this choice.
 
 ---
 
@@ -29,6 +37,8 @@ Everything runs on your own machine or server. No paid AI API is involved.
 14. [Troubleshooting](#14-troubleshooting)
 15. [Limitations](#15-limitations)
 16. [Future scope](#16-future-scope)
+17. [Free transcription and free hosting](#17-free-transcription-and-free-hosting)
+18. [What changed](#18-what-changed)
 
 ---
 
@@ -46,9 +56,10 @@ cd lyrical-ai
 #    if it is missing, copy the example)
 cp .env.example .env        # Windows PowerShell: Copy-Item .env.example .env
 
-# 2. Open .env and change at least these two placeholders
+# 2. Open .env and change at least these placeholders
 #       POSTGRES_PASSWORD=change_me
 #       JWT_SECRET_KEY=change_me_to_a_long_random_string
+#       OPENAI_API_KEY=<your free Groq key, see section 17>
 
 # 3. Build and start
 docker compose up --build
@@ -63,11 +74,15 @@ Then open **http://localhost:8080**.
 | API docs (ReDoc)    | http://localhost:8080/redoc      |
 | Health check        | http://localhost:8080/api/health |
 
-**First start takes a while.** The first build downloads PyTorch and friends (the backend
-image is about 2.6 GB), and on first start the backend downloads the model weights
-(about 550 MB for the default models) into a Docker volume. Both happen only once.
-`http://localhost:8080/api/health` shows `"modelsLoaded": {"whisper": true, "demucs": true}`
-when the models are ready; uploads made before that simply wait in the queue.
+With the default `cloud` backend the image has no AI libraries and nothing is downloaded
+at start-up. `http://localhost:8080/api/health` reports `"status": "ok"` once the database,
+FFmpeg and the API key are in place (`"degraded"` means one of them is missing).
+
+**The `lite` and `local` backends take a while the first time.** The build installs the
+model libraries (for `local` that is PyTorch, an image of about 2.6 GB) and on first start
+the backend downloads the model weights into a Docker volume. Both happen only once.
+`/api/health` then shows which models are loaded under `modelsLoaded`; uploads made before
+that simply wait in the queue.
 
 Useful commands:
 
@@ -275,16 +290,20 @@ Upload ─► VALIDATING ─► EXTRACTING_AUDIO ─► PREPROCESSING ─► SEP
 | QUEUED             | The upload is saved and the job id is returned immediately.                                             |
 | VALIDATING         | `ffprobe` checks the file decodes, has an audio stream and is within the length limit.                   |
 | EXTRACTING_AUDIO   | Video only: the audio track to use is chosen (the one tagged with the selected language, else the default track). It is decoded straight from the video, on the video's timeline, by the same FFmpeg pass audio uploads go through. |
-| PREPROCESSING      | Silence check, then one FFmpeg pass: loudness normalisation and conversion to mono 16 kHz FLAC (cloud) or stereo 44.1 kHz WAV (local). |
-| SEPARATING_VOCALS  | Local backend only: Demucs splits the song into stems; only the vocal stem is kept.                     |
-| DETECTING_LANGUAGE | Local backend only: with Auto Detect, Whisper picks the most likely of the supported languages.         |
+| PREPROCESSING      | Silence check, then one FFmpeg pass: loudness normalisation and conversion to mono 16 kHz FLAC (cloud, lite) or stereo 44.1 kHz WAV (local). |
+| SEPARATING_VOCALS  | `local` backend only: Demucs splits the song into stems; only the vocal stem is kept.                     |
+| DETECTING_LANGUAGE | `lite` and `local` backends: with Auto Detect, Whisper picks the most likely of the supported languages.         |
 | TRANSCRIBING       | Whisper (cloud API or local model) transcribes the audio into segments with start/end times. A selected language is passed as Whisper's `language`, which turns language detection off for that job. |
 | POST_PROCESSING    | Whitespace/punctuation clean-up, removal of known artifacts ("[Music]", "Thanks for watching"), merging of tiny fragments. Repeated lines are kept; nothing is invented. |
 | COMPLETED / FAILED | Lyrics and segments are stored; intermediate files are deleted.                                         |
 
 **Backends.** `TRANSCRIPTION_BACKEND=cloud` (default) sends the audio to an
-OpenAI-compatible Whisper API and loads no model, so the backend runs in a few hundred
-MB of RAM. `TRANSCRIPTION_BACKEND=local` runs Demucs + Whisper in-process; it needs
+OpenAI-compatible Whisper API - Groq's free tier unless you change `OPENAI_BASE_URL` -
+and loads no model, so the backend runs in a few hundred MB of RAM.
+`TRANSCRIPTION_BACKEND=lite` runs a small Whisper model in-process on the CPU, on the
+full mix (no Demucs): it skips SEPARATING_VOCALS, needs `backend/requirements-lite.txt`
+(Docker: `INSTALL_LOCAL_MODELS=lite`), no PyTorch and no API key.
+`TRANSCRIPTION_BACKEND=local` runs Demucs + Whisper in-process; it needs
 `backend/requirements-local.txt` (Docker: `INSTALL_LOCAL_MODELS=true`) and the RAM
 described in section 8.
 
@@ -316,17 +335,17 @@ Both files ship with placeholder values and are git-ignored - **never commit the
 | `MAX_DURATION_MINUTES`       | `15`                      | Longest audio/video accepted                                            |
 | `FILE_RETENTION_HOURS`       | `72`                      | How long uploads are kept for playback (lyrics are kept until deleted)  |
 | `STORAGE_PATH`               | `/app/storage`            | Where uploads and working files live                                    |
-| `TRANSCRIPTION_BACKEND`      | `cloud`                   | `cloud` (Whisper API, no local model) or `local` (Demucs + Whisper)     |
-| `OPENAI_API_KEY`             | *(empty)*                 | **Set this.** API key for the cloud transcription service               |
-| `OPENAI_BASE_URL`            | `https://api.openai.com/v1` | Any OpenAI-compatible endpoint, e.g. `https://api.groq.com/openai/v1` |
-| `OPENAI_TRANSCRIPTION_MODEL` | `whisper-1`               | Model name; must return segment timestamps (`verbose_json`)             |
-| `INSTALL_LOCAL_MODELS`       | `false`                   | Docker build: install PyTorch, Demucs and Whisper for the local backend |
-| `WHISPER_MODEL`              | `small`                   | Local only: `tiny`, `base`, `small` or `medium`                         |
-| `DEVICE`                     | `auto`                    | Local only: `auto`, `cpu` or `cuda`                                     |
-| `DEMUCS_MODEL`               | `htdemucs`                | Local only: Demucs model name                                           |
-| `PRELOAD_MODELS`             | `true`                    | Local only: load models at start-up instead of on the first upload      |
-| `ENABLE_SEPARATION_FALLBACK` | `true`                    | Local only: transcribe the full mix if Demucs fails                     |
-| `MODEL_CACHE_DIR`            | `/app/models` (volume)    | Local only: where model weights are stored                              |
+| `TRANSCRIPTION_BACKEND`      | `cloud`                   | `cloud` (Whisper API, no model in memory), `lite` (small Whisper on the CPU) or `local` (Demucs + Whisper) |
+| `OPENAI_API_KEY`             | *(empty)*                 | **Set this** for `cloud`: the API key, by default a free Groq key (`gsk_...`) |
+| `OPENAI_BASE_URL`            | `https://api.groq.com/openai/v1` | Any OpenAI-compatible endpoint; OpenAI itself is `https://api.openai.com/v1` |
+| `OPENAI_TRANSCRIPTION_MODEL` | `whisper-large-v3`        | Model name; must return segment timestamps (`verbose_json`). `whisper-1` on OpenAI |
+| `INSTALL_LOCAL_MODELS`       | `false`                   | Docker build: `lite` installs Whisper alone, `true` installs PyTorch, Demucs and Whisper |
+| `WHISPER_MODEL`              | `small`                   | `lite`/`local`: `tiny`, `base`, `small` or `medium`                     |
+| `DEVICE`                     | `auto`                    | `lite`/`local`: `auto`, `cpu` or `cuda` (`lite` always ends up on the CPU) |
+| `DEMUCS_MODEL`               | `htdemucs`                | `local` only: Demucs model name                                         |
+| `PRELOAD_MODELS`             | `true`                    | `lite`/`local`: load models at start-up instead of on the first upload  |
+| `ENABLE_SEPARATION_FALLBACK` | `true`                    | `local` only: transcribe the full mix if Demucs fails                   |
+| `MODEL_CACHE_DIR`            | `/app/models` (volume)    | `lite`/`local`: where model weights are stored                          |
 | `APP_PORT` / `APP_BIND`      | `8080` / `0.0.0.0`        | Host port / address the site is published on                            |
 | `LOG_LEVEL`                  | `INFO`                    | Log verbosity                                                           |
 
@@ -340,8 +359,9 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 ## 8. Model configuration and GPU
 
-This section applies to `TRANSCRIPTION_BACKEND=local` only. The default cloud backend
-loads no model and needs none of this.
+This section applies to `TRANSCRIPTION_BACKEND=lite` and `local`. The default cloud
+backend loads no model and needs none of this. The RAM column is for the `local` backend;
+`lite` needs much less (measured figures are in section 17).
 
 | `WHISPER_MODEL` | Download | RAM (CPU, approx.) | Notes                                                |
 | --------------- | -------- | ------------------ | ---------------------------------------------------- |
@@ -350,8 +370,9 @@ loads no model and needs none of this.
 | `small`         | 465 MB   | 2 GB               | **Default** - best CPU trade-off                     |
 | `medium`        | 1.5 GB   | 5 GB               | Noticeably better for Hindi/Telugu; slow without GPU |
 
-Demucs (`htdemucs`) adds about 80 MB of weights and 2-3 GB of RAM while separating.
-**Plan for at least 4 GB of RAM (8 GB recommended) for the backend container.**
+Demucs (`htdemucs`, `local` backend only) adds about 80 MB of weights and 2-3 GB of RAM
+while separating. **For `local`, plan for at least 4 GB of RAM (8 GB recommended) for the
+backend container.**
 
 Models are downloaded once, cached (`model_cache` volume in Docker, `models/` locally),
 loaded once per process and reused for every job.
@@ -452,8 +473,10 @@ docker compose exec postgres pg_dump -U lyricalai lyricalai > backup.sql
 
 ## 11. Production deployment and HTTPS
 
-Target: an Ubuntu server with Docker. **Recommended size: 4 vCPU, 8 GB RAM, 20 GB disk**
-(2 vCPU / 4 GB works with `WHISPER_MODEL=base`, slowly).
+Target: an Ubuntu server with Docker. With the default `cloud` backend a small instance
+(1 vCPU, 1 GB RAM) is enough. For the `local` backend the **recommended size is 4 vCPU,
+8 GB RAM, 20 GB disk** (2 vCPU / 4 GB works with `WHISPER_MODEL=base`, slowly). For
+hosting without paying, see section 17.
 
 ```bash
 # 1. Install Docker (once)
@@ -468,6 +491,7 @@ cp .env.example .env
 nano .env
 #   POSTGRES_PASSWORD=<long random password>
 #   JWT_SECRET_KEY=<output of: python3 -c "import secrets; print(secrets.token_urlsafe(48))">
+#   OPENAI_API_KEY=<your Groq key>   # not needed with TRANSCRIPTION_BACKEND=lite or local
 #   CORS_ORIGINS=https://your-domain.example
 #   APP_BIND=127.0.0.1        # only the host's HTTPS proxy may reach the app
 #   APP_PORT=8080
@@ -549,14 +573,15 @@ Uploads, the database and the model cache live in Docker volumes and survive reb
 
 ```bash
 cd backend
-pytest                      # 77 tests, about 10 seconds
+pytest                      # 94 tests, about 15 seconds
 ```
 
 Covers file validation, filename sanitising and path-traversal protection, every API
 endpoint, error formats, ownership rules, authentication, job status, history,
 TXT/SRT/VTT generation, media range requests, and the full pipeline against **real
 FFmpeg** (audio, video, corrupt files, silent files, videos without audio, fallback,
-mid-job deletion). In these fast tests Demucs and Whisper are replaced by stubs.
+mid-job deletion) on all three backends. In these fast tests the cloud API, Demucs and
+Whisper are replaced by stubs.
 
 The real models are exercised by an opt-in end-to-end test (slow; downloads the weights):
 
@@ -614,7 +639,9 @@ recordings (your own, Creative Commons, public domain).
 | "The file is too large" / HTTP 413                   | Raise `MAX_FILE_SIZE_MB` **and** `NGINX_CLIENT_MAX_BODY_SIZE` (and the host Nginx limit, if used).               |
 | "This file is too long"                              | Raise `MAX_DURATION_MINUTES`.                                                                                    |
 | Lyrics are in the wrong language                     | Pick the language explicitly instead of Auto Detect.                                                             |
-| Lyrics are poor for Hindi/Telugu                     | Use `WHISPER_MODEL=medium` (ideally with a GPU).                                                                 |
+| Lyrics are poor for Hindi/Telugu                     | `lite`/`local`: use a bigger `WHISPER_MODEL` (`medium`, ideally with a GPU), or switch to the `cloud` backend, which runs `large-v3`. |
+| Jobs fail with "transcription service is not configured" | `cloud` backend: `OPENAI_API_KEY` is empty or was rejected (401/403). Check the key matches `OPENAI_BASE_URL`. |
+| Jobs fail with "transcription service is busy"       | `cloud` backend: the API kept answering with a rate limit or server error. On Groq's free tier wait for the limit to reset, or use `TRANSCRIPTION_BACKEND=lite`. |
 | "Media no longer available" on an old result         | Uploads are deleted after `FILE_RETENTION_HOURS`; the lyrics remain.                                             |
 | Local: "media processing tool is not available"      | FFmpeg is not on `PATH`. Install it and reopen the terminal.                                                     |
 | Local: `pip install` fails building packages         | Use Python 3.11 or 3.12.                                                                                         |
@@ -652,6 +679,144 @@ job=1fd5f0a1-… stage=COMPLETED model=whisper-small device=cpu duration=25.0s p
 - Better separation models and an option to download the isolated vocal track
 - Lyric editing in the browser before export
 - A dedicated worker queue (Redis + RQ/Celery) for multi-GPU or multi-node deployments
+
+---
+
+## 17. Free transcription and free hosting
+
+### Option A - Groq's free tier (the default, best accuracy)
+
+The `cloud` backend talks to any OpenAI-compatible `/audio/transcriptions` endpoint. It
+now defaults to [Groq](https://console.groq.com), which serves Whisper `large-v3` on a
+free tier. Note the spelling: **Groq** (groq.com, runs open models such as Whisper) is
+not **Grok** (xAI's chat model); LyricalAI needs speech-to-text, which is what Groq offers.
+
+1. Sign in at https://console.groq.com and create a key under **API Keys**.
+2. Put it in `.env` (Docker) or `backend/.env` (local):
+
+   ```ini
+   TRANSCRIPTION_BACKEND=cloud
+   OPENAI_API_KEY=gsk_your_key_here
+   OPENAI_BASE_URL=https://api.groq.com/openai/v1
+   OPENAI_TRANSCRIPTION_MODEL=whisper-large-v3
+   ```
+
+3. Restart the backend. `/api/health` should report `"status": "ok"` and
+   `"whisperModel": "whisper-large-v3"`.
+
+Free-tier limits when this was written (October 2026; check
+https://console.groq.com/docs/rate-limits, they change): about 7,200 seconds of audio per
+hour, 28,800 per day, 2,000 requests per day, and 25 MB per file. LyricalAI already sends
+mono 16 kHz FLAC and falls back to MP3 to stay under 25 MB, and retries a rate-limited
+request three times before failing the job with a "busy" message.
+`whisper-large-v3-turbo` is a faster, slightly less accurate alternative model name.
+
+The variables keep the `OPENAI_` prefix because they describe the protocol, not the
+vendor. To go back to OpenAI (paid) set `OPENAI_BASE_URL=https://api.openai.com/v1` and
+`OPENAI_TRANSCRIPTION_MODEL=whisper-1`.
+
+### Option B - the `lite` backend (no key, no account)
+
+A small pretrained Whisper model runs inside the backend process on the CPU, through
+faster-whisper (CTranslate2, 8-bit weights). There is no PyTorch and no Demucs, so the
+install is small and it starts on modest hardware. Nothing was trained for this: it is
+OpenAI's open-source Whisper `tiny`/`base` checkpoint.
+
+Local development:
+
+```bash
+cd backend
+pip install -r requirements-lite.txt -c constraints.txt
+# backend/.env
+#   TRANSCRIPTION_BACKEND=lite
+#   WHISPER_MODEL=base
+uvicorn app.main:app --port 8000
+```
+
+Docker (root `.env`):
+
+```ini
+TRANSCRIPTION_BACKEND=lite
+INSTALL_LOCAL_MODELS=lite
+WHISPER_MODEL=base
+DEVICE=cpu
+```
+
+Peak memory of the transcription step alone, measured on Windows on a 12-second clip
+(the API process and database driver add roughly 100 MB on top):
+
+| `WHISPER_MODEL` | Weights | Peak RAM (measured) | Use it for                              |
+| --------------- | ------- | ------------------- | --------------------------------------- |
+| `tiny`          | 75 MB   | about 300 MB        | 512 MB instances; clear English only     |
+| `base`          | 145 MB  | about 380 MB        | 1 GB instances; English, rough Hindi/Telugu |
+| `small`         | 465 MB  | about 740 MB        | 2 GB instances; the best `lite` choice when it fits |
+
+Trade-offs against the other backends: no vocal separation, so loud backing tracks hurt
+more; `tiny` and `base` are weak on Hindi and Telugu singing; and CPU transcription of a
+full song takes minutes. Use Option A whenever a key is acceptable.
+
+### Free hosting
+
+Nothing below has been deployed from this repository; these are the combinations the
+backends were sized for. Free plans change, so check the current limits before relying
+on one.
+
+| Backend | Needs                         | Fits                                                              |
+| ------- | ----------------------------- | ----------------------------------------------------------------- |
+| `cloud` | about 250 MB RAM, a Groq key   | 512 MB free web services (for example Render or Koyeb)             |
+| `lite`  | 0.5-1 GB RAM, 2 vCPU helps     | Free CPU hosts with more memory (for example a Hugging Face Docker Space or an Oracle Cloud Always Free VM) |
+| `local` | 4-8 GB RAM                    | Not a free-tier workload                                           |
+
+- **Backend**: deploy `backend/Dockerfile` (build argument `INSTALL_LOCAL_MODELS=lite`
+  for the lite backend). It listens on port 8000.
+- **Database**: set `DATABASE_URL` to a hosted PostgreSQL (Neon and Supabase have free
+  plans). `sqlite:///./lyricalai.db` also works but is lost when a host without a
+  persistent disk restarts.
+- **Frontend**: `frontend/` is a static Vite build (`npm run build`), served by the
+  bundled Nginx container or any static host. Requests to `/api` must reach the backend,
+  and `CORS_ORIGINS` must list the site's origin if it is on a different domain.
+- **Uploads** live in `STORAGE_PATH`. On hosts with an ephemeral disk, playback of old
+  uploads stops after a restart; the lyrics are in the database and remain.
+- Free instances that sleep when idle lose the in-memory job queue; a job that was
+  running is marked failed on the next start and must be uploaded again.
+
+---
+
+## 18. What changed
+
+### Free transcription: Groq default and the `lite` backend
+
+The project never called Grok (xAI). Its cloud backend called an OpenAI-compatible
+Whisper endpoint that defaulted to OpenAI, which is paid. That is what was replaced.
+
+- **Default cloud provider is now Groq's free tier.** `OPENAI_BASE_URL` defaults to
+  `https://api.groq.com/openai/v1` and `OPENAI_TRANSCRIPTION_MODEL` to `whisper-large-v3`
+  (`backend/app/core/config.py`, `.env.example`, `backend/.env.example`). The request
+  format is unchanged, so no client code changed. **Action needed:** create a Groq key
+  and set `OPENAI_API_KEY`; an OpenAI key will be rejected by the new default endpoint.
+  An existing `.env` that sets `OPENAI_BASE_URL`/`OPENAI_TRANSCRIPTION_MODEL` explicitly
+  keeps using whatever it names.
+- **New `TRANSCRIPTION_BACKEND=lite`.** Runs Whisper alone in-process on the full mix:
+  `_transcribe_lite` in `backend/app/services/transcription_service.py`, sharing the
+  detect-and-transcribe step with the `local` backend.
+- **New `backend/requirements-lite.txt`** (faster-whisper, numpy, requests - no PyTorch).
+  `requirements-local.txt` now builds on it.
+- **Docker:** `INSTALL_LOCAL_MODELS` accepts `lite` as well as `false`/`true`
+  (`backend/Dockerfile`, `docker-compose.yml`).
+- **No PyTorch required for device selection.** `backend/app/utils/device.py` falls back
+  to the CPU when PyTorch is not installed instead of crashing on `DEVICE=auto`.
+- **Model preloading** loads Demucs only for the `local` backend
+  (`backend/app/services/job_queue.py`); the start-up log names the active backend.
+- **Settings:** `uses_local_models` is now true for `lite` and `local`; the new
+  `separates_vocals` is true for `local` only.
+- **Tests:** one new pipeline test for the lite backend
+  (`backend/tests/test_pipeline.py`); the suite is 93 passed, 1 skipped (the opt-in
+  real-model test).
+
+Verified: the test suite, and a real `lite` run of `tiny`, `base` and `small` on a
+synthesised English clip with PyTorch and Demucs made unimportable (all three transcribed
+it correctly). Not verified: a live request to Groq (no key was available) and any
+deployment to a free host.
 
 ---
 

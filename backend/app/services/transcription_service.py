@@ -3,9 +3,10 @@
     validate -> (video: pick the audio track) -> preprocess -> transcribe
              -> post-process -> save
 
-Transcription runs on one of two backends (TRANSCRIPTION_BACKEND):
+Transcription runs on one of three backends (TRANSCRIPTION_BACKEND):
 
     cloud : the audio is sent to an OpenAI-compatible Whisper API; no model is loaded
+    lite  : detect language -> transcribe (small Whisper model on the CPU, no Demucs)
     local : separate vocals (Demucs) -> detect language -> transcribe (Whisper)
 
 Every stage change is written to the database, so the status endpoint always
@@ -166,7 +167,23 @@ def _transcribe_locally(
     whisper_input = audio_service.convert_for_whisper(
         voice_path, storage.temp_path(job_id, ".whisper.wav")
     )
+    return _transcribe_with_whisper(job_id, whisper_input, language)
 
+
+def _transcribe_lite(
+    job_id: str, upload: Path, stream: int, language: str | None
+) -> _Transcript:
+    """Whisper alone in this process, on the full mix. No Demucs, so no PyTorch."""
+    # The same loudness-normalised mono 16 kHz audio the cloud API would be sent.
+    whisper_input = audio_service.encode_for_api(
+        upload, storage.temp_path(job_id, ".api.flac"), stream=stream
+    )
+    return _transcribe_with_whisper(job_id, whisper_input, language)
+
+
+def _transcribe_with_whisper(
+    job_id: str, whisper_input: Path, language: str | None
+) -> _Transcript:
     _set_stage(job_id, JobStatus.DETECTING_LANGUAGE)
     audio = whisper_service.load_audio(whisper_input)
     if language is None:
@@ -230,8 +247,10 @@ def _run_pipeline(job_id: str, started: float) -> None:
     audio_service.ensure_not_silent(upload, stream=stream)
 
     # --- Transcribe ---------------------------------------------------------
-    if settings.uses_local_models:
+    if settings.separates_vocals:
         transcript = _transcribe_locally(job_id, upload, stream, explicit_language)
+    elif settings.uses_local_models:
+        transcript = _transcribe_lite(job_id, upload, stream, explicit_language)
     else:
         transcript = _transcribe_in_cloud(job_id, upload, stream, explicit_language)
     raw_segments = transcript.segments

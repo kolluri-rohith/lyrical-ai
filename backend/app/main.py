@@ -29,7 +29,8 @@ Multilingual automatic lyric transcription.
 
 Upload a song or a music video and LyricalAI prepares the audio (FFmpeg) and
 transcribes it into timestamped lyrics (Whisper) in English, Hindi or Telugu.
-Transcription runs through a cloud Whisper API by default, or on local
+Transcription runs through a cloud Whisper API by default (Groq's free tier), on a
+small in-process Whisper model with `TRANSCRIPTION_BACKEND=lite`, or on local
 Demucs + Whisper models with `TRANSCRIPTION_BACKEND=local`.
 
 Errors are always returned as `{"detail": "...", "code": "..."}`.
@@ -68,7 +69,10 @@ async def lifespan(_: FastAPI):
     cleanup_task = asyncio.create_task(cleanup_loop())
 
     if settings.uses_local_models:
-        transcriber = f"local whisper={settings.whisper_model}, device={settings.device}"
+        transcriber = (
+            f"{settings.transcription_backend} whisper={settings.whisper_model}, "
+            f"device={settings.device}"
+        )
     else:
         transcriber = f"cloud model={cloud_transcription_service.model_name}"
     logger.info(

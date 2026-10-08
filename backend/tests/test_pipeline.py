@@ -246,6 +246,27 @@ def test_local_backend_runs_every_stage(client, tone_wav, stub_models, stages):
     assert _no_intermediates_left(job_id)
 
 
+def test_lite_backend_runs_whisper_without_demucs(client, tone_wav, stub_models, stages, monkeypatch):
+    monkeypatch.setattr(get_settings(), "transcription_backend", "lite")
+    decoded: list = []
+    monkeypatch.setattr(
+        whisper_service, "load_audio", lambda path: decoded.append(probe(path)) or [0.0] * 16000
+    )
+    job_id = _run(client, tone_wav, "audio/wav")
+    assert stages == [
+        "VALIDATING", "PREPROCESSING", "DETECTING_LANGUAGE", "TRANSCRIBING", "POST_PROCESSING",
+    ]
+    detail = _detail(client, job_id)
+    assert detail["status"] == "COMPLETED"
+    assert detail["detectedLanguage"] == "hi"
+    assert detail["warning"] is None
+    assert detail["modelName"] == "whisper-small"
+    assert stub_models["separated"] == []
+    # Whisper received the full mix as mono 16 kHz audio.
+    assert (decoded[0].audio_streams[0].sample_rate, decoded[0].audio_streams[0].channels) == (16000, 1)
+    assert _no_intermediates_left(job_id)
+
+
 def test_local_backend_explicit_language_skips_detection(client, tone_wav, stub_models):
     job_id = _run(client, tone_wav, "audio/wav", language="te")
     assert stub_models["detected"] == 0

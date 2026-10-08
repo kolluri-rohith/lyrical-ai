@@ -1,5 +1,5 @@
 # Everything the backend needs with TRANSCRIPTION_BACKEND=cloud (the default).
-# No PyTorch, Demucs or Whisper: those are in requirements-local.txt.
+# No PyTorch, Demucs or Whisper: see requirements-lite.txt and requirements-local.txt.
 
 # --- API ---------------------------------------------------------------------
 fastapi==0.115.6

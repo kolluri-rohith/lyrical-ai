@@ -1,0 +1,9 @@
+# Extra packages for TRANSCRIPTION_BACKEND=lite (a small Whisper model in-process).
+# No PyTorch and no Demucs, and no API key.
+#   pip install -r requirements-lite.txt -c constraints.txt
+-r requirements.txt
+
+faster-whisper==1.1.1
+numpy==1.26.4
+# faster-whisper imports requests but does not declare it
+requests==2.32.3

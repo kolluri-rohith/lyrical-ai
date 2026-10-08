@@ -14,7 +14,13 @@ def resolve_device() -> str:
     if requested == "cpu":
         return "cpu"
 
-    import torch
+    try:
+        import torch
+    except ImportError:
+        # The lite backend is installed without PyTorch and always runs on the CPU.
+        if requested == "cuda":
+            logger.warning("DEVICE=cuda was requested but PyTorch is not installed; using CPU")
+        return "cpu"
 
     if torch.cuda.is_available():
         return "cuda"

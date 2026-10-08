@@ -1,14 +1,10 @@
 # Extra packages for TRANSCRIPTION_BACKEND=local (Demucs + Whisper in-process).
 # Needs several GB of RAM; not for small/free hosting instances.
 #   pip install -r requirements.txt -r requirements-local.txt -c constraints.txt
--r requirements.txt
+-r requirements-lite.txt
 
 # The Dockerfile installs torch/torchaudio first from the CPU (or CUDA) wheel index.
 torch==2.5.1
 torchaudio==2.5.1
 demucs==4.0.1
-faster-whisper==1.1.1
 soundfile==0.13.0
-numpy==1.26.4
-# faster-whisper imports requests but does not declare it
-requests==2.32.3

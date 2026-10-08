@@ -44,18 +44,20 @@ class Settings(BaseSettings):
 
     # --- Transcription ------------------------------------------------------
     # "cloud" sends the audio to an OpenAI-compatible API and loads no model, so the
-    # backend fits in a small instance. "local" runs Demucs + Whisper in-process and
-    # needs requirements-local.txt and several GB of RAM.
-    transcription_backend: Literal["cloud", "local"] = "cloud"
+    # backend fits in a small instance. "lite" runs a small Whisper model in-process
+    # on the CPU (requirements-lite.txt, no PyTorch, no API key). "local" runs
+    # Demucs + Whisper in-process and needs requirements-local.txt and several GB of RAM.
+    transcription_backend: Literal["cloud", "lite", "local"] = "cloud"
     openai_api_key: str = ""
-    # Any OpenAI-compatible endpoint works, e.g. https://api.groq.com/openai/v1
-    openai_base_url: str = "https://api.openai.com/v1"
-    # Must support response_format=verbose_json (segment timestamps), e.g. whisper-1.
-    openai_transcription_model: str = "whisper-1"
+    # Any OpenAI-compatible endpoint works. The default is Groq, which has a free tier;
+    # for OpenAI use https://api.openai.com/v1 with the model whisper-1.
+    openai_base_url: str = "https://api.groq.com/openai/v1"
+    # Must support response_format=verbose_json (segment timestamps).
+    openai_transcription_model: str = "whisper-large-v3"
     openai_timeout_seconds: int = 600
     openai_max_upload_mb: int = 25
 
-    # --- Local AI models (TRANSCRIPTION_BACKEND=local only) -----------------
+    # --- In-process AI models (TRANSCRIPTION_BACKEND=lite or local) ---------
     whisper_model: Literal["tiny", "base", "small", "medium"] = "small"
     whisper_compute_type: str = "auto"
     whisper_beam_size: int = 5
@@ -110,6 +112,12 @@ class Settings(BaseSettings):
 
     @property
     def uses_local_models(self) -> bool:
+        """Whisper runs in this process ("lite" and "local")."""
+        return self.transcription_backend != "cloud"
+
+    @property
+    def separates_vocals(self) -> bool:
+        """Demucs runs before Whisper ("local" only)."""
         return self.transcription_backend == "local"
 
     @property

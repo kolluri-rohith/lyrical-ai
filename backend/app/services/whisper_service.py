@@ -1,7 +1,7 @@
 """Local Whisper transcription (faster-whisper / CTranslate2). The model is loaded once.
 
-Only used with TRANSCRIPTION_BACKEND=local. Nothing heavy is imported until then, so
-this module is safe to import without requirements-local.txt installed.
+Only used with TRANSCRIPTION_BACKEND=lite or local. Nothing heavy is imported until
+then, so this module is safe to import without requirements-lite.txt installed.
 """
 
 from __future__ import annotations

@@ -1,8 +1,10 @@
 # LyricalAI backend: FastAPI + FFmpeg. Transcription goes to a cloud Whisper API, so
 # the default image has no PyTorch and runs in a few hundred MB of RAM.
-# For local Demucs + Whisper build with --build-arg INSTALL_LOCAL_MODELS=true.
+# --build-arg INSTALL_LOCAL_MODELS=lite adds a small in-process Whisper (no PyTorch);
+# --build-arg INSTALL_LOCAL_MODELS=true adds PyTorch, Demucs and Whisper.
 FROM python:3.11-slim
 
+# false | lite | true
 ARG INSTALL_LOCAL_MODELS=false
 # Local models only: CPU wheels by default. For an NVIDIA GPU build pass
 #   --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121
@@ -24,8 +26,13 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY requirements.txt requirements-local.txt constraints.txt ./
+COPY requirements.txt requirements-lite.txt requirements-local.txt constraints.txt ./
 RUN pip install -r requirements.txt -c constraints.txt
+
+# Lite: Whisper on CTranslate2 only.
+RUN if [ "${INSTALL_LOCAL_MODELS}" = "lite" ]; then \
+        pip install -r requirements-lite.txt -c constraints.txt; \
+    fi
 
 # Local models: PyTorch first, from the chosen wheel index, then Demucs and Whisper.
 RUN if [ "${INSTALL_LOCAL_MODELS}" = "true" ]; then \

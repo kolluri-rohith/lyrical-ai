@@ -43,7 +43,7 @@ class JobQueue:
         self._executor.submit(process_job, job_id)
 
     def preload_models(self) -> None:
-        """Warm both models on the worker thread so the first job does not pay for it."""
+        """Warm the models on the worker thread so the first job does not pay for it."""
         self.start()
         self._executor.submit(_load_models)
 
@@ -79,7 +79,8 @@ class JobQueue:
 def _load_models() -> None:
     try:
         whisper_service.load()
-        vocal_separation_service.load()
+        if get_settings().separates_vocals:
+            vocal_separation_service.load()
     except Exception:
         logger.exception("Model preloading failed; models will be loaded on first use")
 
