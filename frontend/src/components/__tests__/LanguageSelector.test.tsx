@@ -7,7 +7,7 @@ import LanguageSelector from '../LanguageSelector';
 describe('LanguageSelector', () => {
   it('offers Auto Detect plus every configured language', () => {
     render(<LanguageSelector languages={DEFAULT_CONFIG.languages} value="auto" onChange={() => undefined} />);
-    expect(screen.getByRole('group', { name: /song language/i })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: /select lyrics language/i })).toBeInTheDocument();
     expect(screen.getAllByRole('radio')).toHaveLength(4);
     expect(screen.getByRole('radio', { name: /auto detect/i })).toBeChecked();
     expect(screen.getByRole('radio', { name: /english/i })).not.toBeChecked();

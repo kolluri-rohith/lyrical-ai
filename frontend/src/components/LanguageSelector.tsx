@@ -15,7 +15,7 @@ export default function LanguageSelector({ languages, value, onChange, disabled 
 
   return (
     <fieldset disabled={disabled}>
-      <legend className="label">Song language</legend>
+      <legend className="label">Select lyrics language</legend>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {options.map((language) => {
           const checked = value === language.code;
