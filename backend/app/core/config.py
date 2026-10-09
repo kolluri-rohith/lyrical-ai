@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     preload_models: bool = False
     enable_separation_fallback: bool = True
     ffmpeg_timeout_seconds: int = 600
+    # Full paths to the binaries, for when they are not on PATH. Empty = search for them.
+    ffmpeg_path: str = ""
+    ffprobe_path: str = ""
 
     # --- API / security -----------------------------------------------------
     cors_origins: str = "http://localhost:5173"

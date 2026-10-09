@@ -1,8 +1,10 @@
 """Thin wrappers around the ffmpeg / ffprobe binaries."""
 
 import json
+import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,14 +36,76 @@ class MediaInfo:
     audio_streams: tuple[AudioStream, ...] = ()
 
 
+_resolved: dict[str, str] = {}
+
+
+def _windows_path_dirs() -> list[str]:
+    """PATH as currently saved in the registry.
+
+    A terminal opened before FFmpeg was installed (e.g. with winget) keeps the old PATH,
+    so the process cannot see the new binaries even though they are installed.
+    """
+    import winreg
+
+    keys = [
+        (winreg.HKEY_CURRENT_USER, r"Environment"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+    ]
+    dirs: list[str] = []
+    for hive, subkey in keys:
+        try:
+            with winreg.OpenKey(hive, subkey) as key:
+                value, _ = winreg.QueryValueEx(key, "Path")
+        except OSError:
+            continue
+        dirs.extend(os.path.expandvars(part) for part in str(value).split(";") if part)
+    return dirs
+
+
+def _windows_candidates(name: str) -> list[str]:
+    candidates = [shutil.which(name, path=directory) for directory in _windows_path_dirs()]
+    # winget installs Gyan.FFmpeg under %LOCALAPPDATA%\Microsoft\WinGet\Packages.
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        packages = Path(local_app_data) / "Microsoft" / "WinGet" / "Packages"
+        candidates.extend(str(p) for p in sorted(packages.glob(f"*FFmpeg*/*/bin/{name}.exe")))
+    return [c for c in candidates if c]
+
+
+def binary(name: str) -> str | None:
+    """Full path of `ffmpeg` / `ffprobe`, or None when it cannot be found."""
+    if name in _resolved:
+        return _resolved[name]
+
+    configured = getattr(get_settings(), f"{name}_path")
+    if configured:
+        found = shutil.which(configured)
+        if found is None:
+            logger.error("%s_PATH=%s does not point to an executable", name.upper(), configured)
+    else:
+        found = shutil.which(name)
+        if found is None and sys.platform == "win32":
+            found = next(iter(_windows_candidates(name)), None)
+            if found:
+                logger.warning("%s is not on PATH; using %s", name, found)
+
+    if found:
+        _resolved[name] = found
+    return found
+
+
 def ffmpeg_available() -> bool:
-    return shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+    return binary("ffmpeg") is not None and binary("ffprobe") is not None
 
 
 def _run(command: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
+    executable = binary(command[0])
+    if executable is None:
+        logger.error("%s binary not found on PATH", command[0])
+        raise PipelineError("The media processing tool is not available on the server.")
     try:
         return subprocess.run(
-            command,
+            [executable, *command[1:]],
             capture_output=True,
             text=True,
             encoding="utf-8",

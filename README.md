@@ -643,7 +643,7 @@ recordings (your own, Creative Commons, public domain).
 | Jobs fail with "transcription service is not configured" | `cloud` backend: `OPENAI_API_KEY` is empty or was rejected (401/403). Check the key matches `OPENAI_BASE_URL`. |
 | Jobs fail with "transcription service is busy"       | `cloud` backend: the API kept answering with a rate limit or server error. On Groq's free tier wait for the limit to reset, or use `TRANSCRIPTION_BACKEND=lite`. |
 | "Media no longer available" on an old result         | Uploads are deleted after `FILE_RETENTION_HOURS`; the lyrics remain.                                             |
-| Local: "media processing tool is not available"      | FFmpeg is not on `PATH`. Install it and reopen the terminal.                                                     |
+| Local: "media processing tool is not available"      | FFmpeg is not on `PATH`. Install it and reopen the terminal, or set `FFMPEG_PATH` / `FFPROBE_PATH` to the full paths. On Windows a winget install is found even from a terminal opened before it. |
 | Local: `pip install` fails building packages         | Use Python 3.11 or 3.12.                                                                                         |
 | Local: frontend shows "Can't reach the server"       | The backend is not running on port 8000.                                                                         |
 
