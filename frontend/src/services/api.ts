@@ -14,7 +14,18 @@ import type {
 } from '../types';
 import { clearToken, getClientId, getToken } from '../utils/clientId';
 
-export const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/+$/, '');
+export function resolveApiBase(value?: string): string {
+  const raw = (value ?? '/api').trim();
+  if (!raw || raw === '/') return '/api';
+
+  const normalized = raw.replace(/\/+$/, '');
+  if (normalized.endsWith('/api')) return normalized;
+  if (normalized === '' || normalized === '/') return '/api';
+
+  return `${normalized}/api`;
+}
+
+export const API_BASE = resolveApiBase(import.meta.env.VITE_API_BASE_URL);
 export const UNAUTHORIZED_EVENT = 'lyricalai:unauthorized';
 
 const GENERIC_ERROR = 'Something went wrong. Please try again.';
