@@ -1,0 +1,56 @@
+# Render blueprint: the free deployment described in README section 17.
+# In Render choose New > Blueprint and pick this repository. Render asks for every
+# value marked `sync: false`; nothing secret is stored in this file.
+#
+# Order: create the database first (Neon or Supabase) so DATABASE_URL is ready, deploy,
+# then set VITE_API_BASE_URL and CORS_ORIGINS from the two URLs Render assigns.
+
+services:
+  # --- Backend: FastAPI + FFmpeg, transcription through Groq ---------------------
+  - type: web
+    name: lyricalai-backend
+    runtime: docker
+    plan: free
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      # The image listens on 8000 (see backend/Dockerfile).
+      - key: PORT
+        value: 8000
+      - key: ENVIRONMENT
+        value: production
+      # Hosted PostgreSQL, e.g. postgresql://user:password@host/dbname?sslmode=require
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: TRANSCRIPTION_BACKEND
+        value: cloud
+      # Free Groq key from https://console.groq.com/keys (it starts with gsk_).
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: OPENAI_TRANSCRIPTION_MODEL
+        value: whisper-large-v3
+      # The frontend's public URL, e.g. https://lyricalai-frontend.onrender.com
+      - key: CORS_ORIGINS
+        sync: false
+
+  # --- Frontend: static Vite build -------------------------------------------------
+  - type: web
+    name: lyricalai-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    # Client-side routing: every path serves the app.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # The backend's public URL plus /api, e.g. https://lyricalai-backend.onrender.com/api
+      - key: VITE_API_BASE_URL
+        sync: false
